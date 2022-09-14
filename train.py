@@ -55,7 +55,7 @@ from utils.loss import ComputeLoss
 from utils.metrics import fitness
 from utils.plots import plot_evolve, plot_labels
 from utils.torch_utils import EarlyStopping, ModelEMA, de_parallel, select_device, torch_distributed_zero_first
-from utils.ymir_yolov5 import ymir_process_config,write_ymir_training_result
+from utils.ymir_yolov5 import YmirStage, write_ymir_training_result, get_ymir_process, get_merged_config
 from ymir_exc import monitor
 
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
@@ -67,7 +67,9 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
     save_dir, epochs, batch_size, weights, single_cls, evolve, data, cfg, resume, noval, nosave, workers, freeze = \
         Path(opt.save_dir), opt.epochs, opt.batch_size, opt.weights, opt.single_cls, opt.evolve, opt.data, opt.cfg, \
         opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze
-    log_dir = Path(opt.log_dir)
+    ymir_cfg = opt.ymir_cfg
+    opt.ymir_cfg = '' # yaml cannot dump edict, remove it here
+    log_dir = Path(ymir_cfg.ymir.output.tensorboard_dir)
     callbacks.run('on_pretrain_routine_start')
 
     # Directories
@@ -304,12 +306,16 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
                 f'Using {train_loader.num_workers * WORLD_SIZE} dataloader workers\n'
                 f"Logging results to {colorstr('bold', save_dir)}\n"
                 f'Starting training for {epochs} epochs...')
+
+    monitor_gap = max(1, (epochs - start_epoch + 1) // 100)
     for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
         callbacks.run('on_train_epoch_start')
         model.train()
 
         # ymir monitor
-        monitor.write_monitor_logger(percent=ymir_process_config['preprocess']+ymir_process_config['task']*epoch/epochs)
+        if epoch % monitor_gap == 0:
+            percent = get_ymir_process(stage=YmirStage.TASK, p=epoch/(epochs-start_epoch+1))
+            monitor.write_monitor_logger(percent=percent)
 
         # Update image weights (optional, single-GPU only)
         if opt.image_weights:
@@ -427,10 +433,10 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
 
                 # Save last, best and delete
                 torch.save(ckpt, last)
-                write_ymir_training_result(results,maps,rewrite=False)
+                write_ymir_training_result(ymir_cfg, results, maps, rewrite=False)
                 if best_fitness == fi:
                     torch.save(ckpt, best)
-                    write_ymir_training_result(results,maps,rewrite=True)
+                    write_ymir_training_result(ymir_cfg, results, maps, rewrite=True)
                 if (epoch > 0) and (opt.save_period > 0) and (epoch % opt.save_period == 0):
                     torch.save(ckpt, w / f'epoch{epoch}.pt')
                 del ckpt
@@ -554,7 +560,8 @@ def main(opt, callbacks=Callbacks()):
         if opt.name == 'cfg':
             opt.name = Path(opt.cfg).stem  # use model.yaml as name
         opt.save_dir = str(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))
-        opt.log_dir = str(increment_path(Path(opt.project) / 'tensorboard', exist_ok=opt.exist_ok))
+        ymir_cfg = get_merged_config()
+        opt.ymir_cfg = ymir_cfg
 
 
     # DDP mode

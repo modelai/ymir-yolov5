@@ -1,141 +1,166 @@
 """
-convert ymir dataset to yolov5 dataset
+function for combine ymir and yolov5
 """
-import os
 import os.path as osp
 import shutil
+from enum import IntEnum
+from typing import Any, List, Tuple
 
-import imagesize
 import numpy as np
 import torch
 import yaml
-from loguru import logger
-from ymir_exc import dataset_reader as dr
-from ymir_exc import env, monitor
+from easydict import EasyDict as edict
+from nptyping import NDArray, Shape, UInt8
+from ymir_exc import env
 from ymir_exc import result_writer as rw
 
 from models.common import DetectMultiBackend
+from models.experimental import attempt_download
 from utils.augmentations import letterbox
-from utils.dataloaders import img2label_paths
 from utils.general import check_img_size, non_max_suppression, scale_coords
 from utils.torch_utils import select_device
 
-# const value for process
-ymir_process_config = dict(
-    preprocess=0.1,
-    task=0.8,
-    postprocess=0.1)
 
-def get_code_config() -> dict:
-    executor_config=env.get_executor_config()
-    code_config_file = executor_config.get('code_config',None)
+class YmirStage(IntEnum):
+    PREPROCESS = 1  # convert dataset
+    TASK = 2    # training/mining/infer
+    POSTPROCESS = 3  # export model
 
-    # if code_config_file == '' or code_config_file is None:
-    if not code_config_file:
-        return dict()
 
-    elif not os.path.exists(code_config_file):
-        assert False, f"cannot find code config {code_config_file}"
+BBOX = NDArray[Shape['*,4'], Any]
+CV_IMAGE = NDArray[Shape['*,*,3'], UInt8]
+
+
+def get_ymir_process(stage: YmirStage, p: float) -> float:
+    # const value for ymir process
+    PREPROCESS_PERCENT = 0.1
+    TASK_PERCENT = 0.8
+    POSTPROCESS_PERCENT = 0.1
+
+    if p < 0 or p > 1.0:
+        raise Exception(f'p not in [0,1], p={p}')
+
+    if stage == YmirStage.PREPROCESS:
+        return PREPROCESS_PERCENT * p
+    elif stage == YmirStage.TASK:
+        return PREPROCESS_PERCENT + TASK_PERCENT * p
+    elif stage == YmirStage.POSTPROCESS:
+        return PREPROCESS_PERCENT + TASK_PERCENT + POSTPROCESS_PERCENT * p
     else:
-        with open(code_config_file, 'r') as f:
-            return yaml.safe_load(f)
+        raise NotImplementedError(f'unknown stage {stage}')
 
-def get_universal_config() -> dict:
-    """
-    merge executor_config and code_config
-    """
 
-    ### exe_cfg overwrite code_cfg
+def get_merged_config() -> edict:
+    """
+    merge ymir_config, executor_config and code_config
+    code_config will be overwritten by executor_config.
+    """
+    def get_code_config(code_config_file: str) -> dict:
+        if code_config_file is None:
+            return dict()
+        else:
+            with open(code_config_file, 'r') as f:
+                return yaml.safe_load(f)
+
     exe_cfg = env.get_executor_config()
-    code_cfg = get_code_config()
+    code_config_file = exe_cfg.get('code_config', None)
+    code_cfg = get_code_config(code_config_file)
+    code_cfg.update(exe_cfg)
 
-    exe_cfg.update(code_cfg)
-    return exe_cfg
+    merged_cfg = edict()
+    # the hyperparameter information
+    merged_cfg.param = code_cfg
 
-def get_weight_file() -> str:
-    executor_config = get_universal_config()
-    path_config = env.get_current_env()
+    # the ymir path information
+    merged_cfg.ymir = env.get_current_env()
+    return merged_cfg
 
-    weights = None
-    model_params_path = executor_config['model_params_path']
-    model_dir = osp.join(path_config.input.root_dir,
-                         path_config.input.models_dir)
+
+def get_weight_file(cfg: edict) -> str:
+    """
+    return the weight file path by priority
+    find weight file in cfg.param.model_params_path or cfg.param.model_params_path
+    """
+    if cfg.ymir.run_training:
+        model_params_path = cfg.param.get('pretrained_model_params', [])
+    else:
+        model_params_path = cfg.param.get('model_params_path', [])
+
+    model_dir = osp.join(cfg.ymir.input.root_dir,
+                         cfg.ymir.input.models_dir)
     model_params_path = [p for p in model_params_path if osp.exists(osp.join(model_dir, p))]
 
-    # choose weight file by priority, best.pt > xxx.pt > f'{model_name}'.pt
+    # choose weight file by priority, best.pt > xxx.pt
     if 'best.pt' in model_params_path:
-        weights = osp.join(model_dir, 'best.pt')
+        return osp.join(model_dir, 'best.pt')
     else:
         for f in model_params_path:
             if f.endswith('.pt'):
-                weights = osp.join(model_dir, f)
-                break
+                return osp.join(model_dir, f)
 
-    if weights is None:
-        model_name = get_universal_config()['model']
-        weights = f'{model_name}.pt'
-        logger.info(f'cannot find pytorch weight in {model_params_path}, use {weights} instead')
+    return ""
 
+
+def download_weight_file(model_name):
+    weights = attempt_download(f'{model_name}.pt')
     return weights
 
 
 class YmirYolov5():
-    def __init__(self):
-        executor_config = env.get_executor_config()
-        gpu_id = executor_config.get('gpu_id', '0')
-        gpu_num = len(gpu_id.split(','))
-        if gpu_num == 0:
-            device = 'cpu'
-        else:
-            device = gpu_id
-        device = select_device(device)
+    """
+    used for mining and inference to init detector and predict.
+    """
+
+    def __init__(self, cfg: edict):
+        self.cfg = cfg
+        device = select_device(cfg.param.get('gpu_id', 'cpu'))
 
         self.model = self.init_detector(device)
         self.device = device
-        self.class_names = executor_config['class_names']
-
+        self.class_names = cfg.param.class_names
         self.stride = self.model.stride
-        imgsz = (640, 640)
-        imgsz = check_img_size(imgsz, s=self.stride)
-        # Run inference
-        self.model.warmup(imgsz=(1, 3, *imgsz), half=False)  # warmup
+        self.conf_thres = float(cfg.param.conf_thres)
+        self.iou_thres = float(cfg.param.iou_thres)
 
+        img_size = int(cfg.param.img_size)
+        imgsz = (img_size, img_size)
+        imgsz = check_img_size(imgsz, s=self.stride)
+
+        self.model.warmup(imgsz=(1, 3, *imgsz))  # warmup
         self.img_size = imgsz
 
-    def init_detector(self, device):
-        weights = get_weight_file()
+    def init_detector(self, device: torch.device) -> DetectMultiBackend:
+        weights = get_weight_file(self.cfg)
 
-        if not osp.exists(weights):
-            logger.info(f'try to download {weights} ' + '.' * 30)
-
+        data_yaml = osp.join(self.cfg.ymir.output.root_dir, 'data.yaml')
         model = DetectMultiBackend(weights=weights,
                                    device=device,
                                    dnn=False,  # not use opencv dnn for onnx inference
-                                   data='data.yaml')  # dataset.yaml path
+                                   data=data_yaml)  # dataset.yaml path
 
         return model
 
-    def predict(self, img):
-        # preprocess
-        # img0 = cv2.imread(path)  # BGR
-        # Padded resize
+    def predict(self, img: CV_IMAGE) -> NDArray:
+        """
+        predict single image and return bbox information
+        img: opencv BGR, uint8 format
+        """
+        # preprocess: padded resize
         img1 = letterbox(img, self.img_size, stride=self.stride, auto=True)[0]
 
-        # Convert
+        # preprocess: convert data format
         img1 = img1.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
         img1 = np.ascontiguousarray(img1)
         img1 = torch.from_numpy(img1).to(self.device)
 
         img1 = img1 / 255  # 0 - 255 to 0.0 - 1.0
-        if len(img1.shape) == 3:
-            img1 = img1[None]  # expand for batch dim
-
+        img1.unsqueeze_(dim=0)  # expand for batch dim
         pred = self.model(img1)
 
         # postprocess
-        conf_thres = 0.25
-        iou_thres = 0.45
-        classes = None
+        conf_thres = self.conf_thres
+        iou_thres = self.iou_thres
+        classes = None  # not filter class_idx in results
         agnostic_nms = False
         max_det = 1000
 
@@ -150,153 +175,72 @@ class YmirYolov5():
 
         # xyxy, conf, cls
         if len(result) > 0:
-            result = torch.cat(result, dim=0)
-            result = result.data.cpu().numpy()
+            tensor_result = torch.cat(result, dim=0)
+            numpy_result = tensor_result.data.cpu().numpy()
+        else:
+            numpy_result = np.zeros(shape=(0, 6), dtype=np.float32)
 
-        return result
+        return numpy_result
 
-    def infer(self, img):
+    def infer(self, img: CV_IMAGE) -> List[rw.Annotation]:
         anns = []
         result = self.predict(img)
-        if result == []:
-            anns = []
-        else:
-            for i in range(result.shape[0]):
-                xmin, ymin, xmax, ymax, conf, cls = result[i, :6].tolist()
-                ann = rw.Annotation(class_name=self.class_names[int(cls)], score=conf, box=rw.Box(
-                    x=int(xmin), y=int(ymin), w=int(xmax - xmin), h=int(ymax - ymin)))
 
-                anns.append(ann)
+        for i in range(result.shape[0]):
+            xmin, ymin, xmax, ymax, conf, cls = result[i, :6].tolist()
+            ann = rw.Annotation(class_name=self.class_names[int(cls)], score=conf, box=rw.Box(
+                x=int(xmin), y=int(ymin), w=int(xmax - xmin), h=int(ymax - ymin)))
+
+            anns.append(ann)
 
         return anns
 
 
-def digit(x: int) -> int:
-    """
-    求整数10进制的位数
-    """
-    i=1
-    while x>=10:
-        x=x//10
-        i=i+1
-    return i
-
-
-def convert_ymir_to_yolov5(root_dir, args=None):
+def convert_ymir_to_yolov5(cfg: edict) -> None:
     """
     convert ymir format dataset to yolov5 format
+    generate data.yaml for training/mining/infer
     """
-    os.makedirs(root_dir, exist_ok=True)
-    os.makedirs(osp.join(root_dir, 'images'), exist_ok=True)
-    os.makedirs(osp.join(root_dir, 'labels'), exist_ok=True)
 
-    if args is None:
-        env_config = env.get_current_env()
-        if env_config.run_training:
-            train_data_size = dr.items_count(env.DatasetType.TRAINING)
-            val_data_size = dr.items_count(env.DatasetType.VALIDATION)
-            N = len(str(train_data_size + val_data_size))
-            splits = ['train', 'val']
-        elif env_config.run_mining:
-            N = dr.items_count(env.DatasetType.CANDIDATE)
-            splits = ['test']
-        elif env_config.run_infer:
-            N = dr.items_count(env.DatasetType.CANDIDATE)
-            splits = ['test']
-    else:
-        if args.app == 'training':
-            train_data_size = dr.items_count(env.DatasetType.TRAINING)
-            val_data_size = dr.items_count(env.DatasetType.VALIDATION)
-            N = len(str(train_data_size + val_data_size))
-            splits = ['train', 'val']
-        else:
-            N = dr.items_count(env.DatasetType.CANDIDATE)
-            splits = ['test']
+    data = dict(path=cfg.ymir.output.root_dir,
+                nc=len(cfg.param.class_names),
+                names=cfg.param.class_names)
+    for split, prefix in zip(['train', 'val', 'test'], ['training', 'val', 'candidate']):
+        src_file = getattr(cfg.ymir.input, f'{prefix}_index_file')
+        if osp.exists(src_file):
+            shutil.copy(src_file, f'{cfg.ymir.output.root_dir}/{split}.tsv')
 
-    idx = 0
-    DatasetTypeDict = dict(train=env.DatasetType.TRAINING,
-                           val=env.DatasetType.VALIDATION,
-                           test=env.DatasetType.CANDIDATE)
+        data[split] = f'{split}.tsv'
 
-    digit_num = digit(N)
-    path_env = env.get_current_env()
-    for split in splits:
-        split_imgs = []
-        for asset_path, annotation_path in dr.item_paths(dataset_type=DatasetTypeDict[split]):
-            idx += 1
-            monitor.write_monitor_logger(percent=ymir_process_config['preprocess'] * idx / N)
-            asset_path = osp.join(path_env.input.root_dir, path_env.input.assets_dir, asset_path)
-
-            assert osp.exists(asset_path), f'cannot find {asset_path}'
-
-            # only copy image for training task
-            # valid train.txt, val.txt and invalid test.txt for training task
-            # invalid train.txt, val.txt and test.txt for infer and mining task
-            if split in ['train', 'val']:
-                annotation_path = osp.join(path_env.input.root_dir, path_env.input.annotations_dir, annotation_path)
-                assert osp.exists(annotation_path), f'cannot find {annotation_path}'
-
-                img_suffix = osp.splitext(asset_path)[1]
-                img_path = osp.join(root_dir, 'images', str(idx).zfill(digit_num) + img_suffix)
-                shutil.copy(asset_path, img_path)
-                ann_path = osp.join(root_dir, 'labels', str(idx).zfill(digit_num) + '.txt')
-                yolov5_ann_path = img2label_paths([img_path])[0]
-                assert yolov5_ann_path == ann_path, f'bad yolov5_ann_path={yolov5_ann_path} and ann_path = {ann_path}'
-
-                width, height = imagesize.get(img_path)
-                with open(ann_path, 'w') as fw:
-                    with open(annotation_path, 'r') as fr:
-                        for line in fr.readlines():
-                            class_id, xmin, ymin, xmax, ymax = [int(x) for x in line.strip().split(',')]
-
-                            # class x_center y_center width height
-                            # normalized xywh
-                            # class_id 0-indexed
-                            xc = (xmin + xmax) / 2 / width
-                            yc = (ymin + ymax) / 2 / height
-                            w = (xmax - xmin) / width
-                            h = (ymax - ymin) / height
-                            fw.write(f'{class_id} {xc} {yc} {w} {h}\n')
-
-            split_imgs.append(img_path)
-        with open(osp.join(root_dir, f'{split}.txt'), 'w') as fw:
-            fw.write('\n'.join(split_imgs))
-
-    # generate data.yaml for training/mining/infer
-    config = env.get_executor_config()
-    data = dict(path=root_dir,
-                train="train.txt",
-                val="val.txt",
-                test='test.txt',
-                nc=len(config['class_names']),
-                names=config['class_names'])
-
-    with open('data.yaml', 'w') as fw:
+    with open(osp.join(cfg.ymir.output.root_dir, 'data.yaml'), 'w') as fw:
         fw.write(yaml.safe_dump(data))
 
 
-def write_ymir_training_result(results, maps, rewrite=False):
+def write_ymir_training_result(cfg: edict, results: Tuple, maps: NDArray, rewrite=False) -> int:
     """
+    cfg: ymir config
     results: (mp, mr, map50, map, loss)
-    maps: map for all class
+    maps: map@0.5:0.95 for all classes
+    rewrite: set true to ensure write the best result
     """
     if not rewrite:
-        training_result_file = env.get_current_env().output.training_result_file
+        training_result_file = cfg.ymir.output.training_result_file
         if osp.exists(training_result_file):
             return 0
 
-    executor_config = get_universal_config()
-    model = executor_config['model']
-    class_names = executor_config['class_names']
-    map50 = maps
+    model = cfg.param.model
+    class_names = cfg.param.class_names
+    mp = results[0]  # mean of precision
+    mr = results[1]  # mean of recall
+    map50 = results[2]  # mean of ap@0.5
+    map = results[3]  # mean of ap@0.5:0.95
 
     # use `rw.write_training_result` to save training result
     rw.write_training_result(model_names=[f'{model}.yaml', 'best.pt', 'last.pt', 'best.onnx'],
-                             mAP=float(np.mean(map50)),
+                             mAP=float(map),
+                             mAP50=float(map50),
+                             precision=float(mp),
+                             recall=float(mr),
                              classAPs={class_name: v
-                                       for class_name, v in zip(class_names, map50.tolist())})
+                                       for class_name, v in zip(class_names, maps.tolist())})
     return 0
-
-
-if __name__ == '__main__':
-    convert_ymir_to_yolov5('/out/yolov5_dataset')
