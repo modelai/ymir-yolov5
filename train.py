@@ -517,8 +517,8 @@ def main(opt, callbacks=Callbacks()):
     # Checks
     if RANK in {-1, 0}:
         print_args(vars(opt))
-        check_git_status()
-        check_requirements()
+        # check_git_status()
+        # check_requirements()
     ymir_cfg = get_merged_config()
     # Resume (from specified or most recent last.pt)
     if opt.resume and not check_wandb_resume(opt) and not check_comet_resume(opt) and not opt.evolve:
