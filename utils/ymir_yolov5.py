@@ -1,8 +1,6 @@
 """
 utils function for ymir and yolov5
 """
-import glob
-import os
 import os.path as osp
 import shutil
 from typing import Any, List
@@ -12,14 +10,14 @@ import torch
 import yaml
 from easydict import EasyDict as edict
 from nptyping import NDArray, Shape, UInt8
-from packaging.version import Version
+from ymir_exc import env
 from ymir_exc import monitor
 from ymir_exc import result_writer as rw
 from ymir_exc.util import YmirStage, get_bool, get_weight_files, get_ymir_process
 
 from models.common import DetectMultiBackend
 from utils.augmentations import letterbox
-from utils.general import check_img_size, non_max_suppression, scale_coords
+from utils.general import check_img_size, non_max_suppression, scale_boxes
 from utils.torch_utils import select_device
 
 BBOX = NDArray[Shape['*,4'], Any]
@@ -114,7 +112,7 @@ class YmirYolov5(torch.nn.Module):
         imgsz = [img_size, img_size]
         imgsz = check_img_size(imgsz, s=self.stride)
 
-        self.model.warmup(imgsz=(1, 3, *imgsz), half=False)  # warmup
+        self.model.warmup(imgsz=(1, 3, *imgsz))  # warmup
         self.img_size: List[int] = imgsz
 
     def extract_feats(self, x):
@@ -172,7 +170,7 @@ class YmirYolov5(torch.nn.Module):
         for det in pred:
             if len(det):
                 # Rescale boxes from img_size to img size
-                det[:, :4] = scale_coords(img1.shape[2:], det[:, :4], img.shape).round()
+                det[:, :4] = scale_boxes(img1.shape[2:], det[:, :4], img.shape).round()
                 result.append(det)
 
         # xyxy, conf, cls
