@@ -16,7 +16,7 @@ from tqdm import tqdm
 from ymir_exc import result_writer as rw
 from ymir_exc.util import YmirStage, get_merged_config
 
-from mining.util import YmirDataset, load_image_file
+from ymir.mining.util import YmirDataset, load_image_file
 from utils.general import scale_coords
 from utils.ymir_yolov5 import YmirYolov5
 
@@ -126,7 +126,7 @@ def main() -> int:
 
     if LOCAL_RANK != -1:
         print(f'rank: {RANK}, start destroy process group')
-        dist.destroy_process_group()
+        # dist.destroy_process_group()
     return 0
 
 

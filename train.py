@@ -24,6 +24,7 @@ import time
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
+import subprocess
 
 import numpy as np
 import torch
@@ -61,7 +62,7 @@ from utils.metrics import fitness
 from utils.plots import plot_evolve
 from utils.torch_utils import (EarlyStopping, ModelEMA, de_parallel, select_device, smart_DDP, smart_optimizer,
                                smart_resume, torch_distributed_zero_first)
-from utils.ymir_yolov5 import YmirStage, get_merged_config, get_ymir_process, write_ymir_training_result
+from ymir_exc.util import YmirStage, get_merged_config, get_ymir_process, write_ymir_training_result
 
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
 RANK = int(os.getenv('RANK', -1))
@@ -73,7 +74,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
         Path(opt.save_dir), opt.epochs, opt.batch_size, opt.weights, opt.single_cls, opt.evolve, opt.data, opt.cfg, \
         opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze
     ymir_cfg = opt.ymir_cfg
-    opt.ymir_cfg = '' # yaml cannot dump edict, remove it here
+    opt.ymir_cfg = ''  # yaml cannot dump edict, remove it here
     log_dir = Path(ymir_cfg.ymir.output.tensorboard_dir)
     callbacks.run('on_pretrain_routine_start')
 
@@ -238,7 +239,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
     nl = de_parallel(model).model[-1].nl  # number of detection layers (to scale hyps)
     hyp['box'] *= 3 / nl  # scale to layers
     hyp['cls'] *= nc / 80 * 3 / nl  # scale to classes and layers
-    hyp['obj'] *= (imgsz / 640) ** 2 * 3 / nl  # scale to image size and layers
+    hyp['obj'] *= (imgsz / 640)**2 * 3 / nl  # scale to image size and layers
     hyp['label_smoothing'] = opt.label_smoothing
     model.nc = nc  # attach number of classes to model
     model.hyp = hyp  # attach hyperparameters to model
@@ -263,19 +264,20 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
                 f"Logging results to {colorstr('bold', save_dir)}\n"
                 f'Starting training for {epochs} epochs...')
 
-    monitor_gap = max(1, (epochs - start_epoch + 1) // 100)
+    monitor_epoch_gap = max(1, (epochs - start_epoch + 1) // 100)
+    monitor_batch_gap = max(1, nb // 100)
     for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
         callbacks.run('on_train_epoch_start')
-        model.train()
-
-        # ymir monitor
-        if epoch % monitor_gap == 0:
-            percent = get_ymir_process(stage=YmirStage.TASK, p=epoch/(epochs-start_epoch+1))
+        # monitor process on epoch level
+        if RANK in [0, -1] and (epoch - start_epoch) % monitor_epoch_gap == 0:
+            epoch_percent = (epoch - start_epoch) / (epochs - start_epoch + 1)
+            percent = get_ymir_process(stage=YmirStage.TASK, p=epoch_percent)
             monitor.write_monitor_logger(percent=percent)
+        model.train()
 
         # Update image weights (optional, single-GPU only)
         if opt.image_weights:
-            cw = model.class_weights.cpu().numpy() * (1 - maps) ** 2 / nc  # class weights
+            cw = model.class_weights.cpu().numpy() * (1 - maps)**2 / nc  # class weights
             iw = labels_to_image_weights(dataset.labels, nc=nc, class_weights=cw)  # image weights
             dataset.indices = random.choices(range(dataset.n), weights=iw, k=dataset.n)  # rand weighted idx
 
@@ -293,6 +295,12 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
         optimizer.zero_grad()
         for i, (imgs, targets, paths, _) in pbar:  # batch -------------------------------------------------------------
             callbacks.run('on_train_batch_start')
+            # monitor process on batch level for the first epoch
+            if RANK in [0, -1] and epoch == start_epoch and i % monitor_batch_gap == 0:
+                epoch_percent = (epoch - start_epoch) / (epochs - start_epoch + 1)
+                batch_percent = i / nb / (epochs - start_epoch + 1)
+                percent = get_ymir_process(stage=YmirStage.TASK, p=epoch_percent + batch_percent)
+                monitor.write_monitor_logger(percent=percent)
             ni = i + nb * epoch  # number integrated batches (since train start)
             imgs = imgs.to(device, non_blocking=True).float() / 255  # uint8 to float32, 0-255 to 0.0-1.0
 
@@ -380,7 +388,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
             callbacks.run('on_fit_epoch_end', log_vals, epoch, best_fitness, fi)
 
             # Save model
-            if (not nosave) or (final_epoch and not evolve):  # if save
+            if (not nosave) or (best_fitness == fi) or (final_epoch and not evolve):  # if save
                 ckpt = {
                     'epoch': epoch,
                     'best_fitness': best_fitness,
@@ -390,17 +398,18 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
                     'optimizer': optimizer.state_dict(),
                     'wandb_id': loggers.wandb.wandb_run.id if loggers.wandb else None,
                     'opt': vars(opt),
-                    'date': datetime.now().isoformat()}
+                    'date': datetime.now().isoformat()
+                }
 
                 # Save last, best and delete
                 torch.save(ckpt, last)
                 if best_fitness == fi:
                     torch.save(ckpt, best)
-                    write_ymir_training_result(ymir_cfg, results, maps, rewrite=True)
-                if opt.save_period > 0 and epoch % opt.save_period == 0:
+                    write_ymir_training_result(ymir_cfg, map50=best_fitness, id='best', files=[str(best)])
+                if (not nosave) and opt.save_period > 0 and epoch % opt.save_period == 0:
                     torch.save(ckpt, w / f'epoch{epoch}.pt')
                     weight_file = str(w / f'epoch{epoch}.pt')
-                    write_ymir_training_result(ymir_cfg, map50=results[2], id=f'epoch_{epoch}', files=[weight_file])
+                    write_ymir_training_result(ymir_cfg, map50=fi, id=f'epoch_{epoch}', files=[weight_file])
                 del ckpt
                 callbacks.run('on_model_save', last, epoch, final_epoch, best_fitness, fi)
 
@@ -440,6 +449,19 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
                         callbacks.run('on_fit_epoch_end', list(mloss) + list(results) + lr, epoch, best_fitness, fi)
 
         callbacks.run('on_train_end', last, best, epoch, results)
+        # 3. convert to onnx and save model weight to design directory
+        opset = ymir_cfg.param.opset
+        onnx_file: Path = best.with_suffix('.onnx')
+        command = f'python3 export.py --weights {best} --opset {opset} --include onnx'
+        LOGGER.info(f'export onnx weight: {command}')
+        subprocess.run(command.split(), check=True)
+
+        if nosave:
+            # save best.pt and best.onnx
+            write_ymir_training_result(ymir_cfg, map50=best_fitness, id='best', files=[str(best), str(onnx_file)])
+        else:
+            # set files = [] to save all files in /out/models
+            write_ymir_training_result(ymir_cfg, map50=best_fitness, id='best', files=[])
 
     torch.cuda.empty_cache()
     return results
@@ -527,7 +549,6 @@ def main(opt, callbacks=Callbacks()):
 
         opt.ymir_cfg = ymir_cfg
 
-
     # DDP mode
     device = select_device(opt.device, batch_size=opt.batch_size)
     if LOCAL_RANK != -1:
@@ -577,7 +598,8 @@ def main(opt, callbacks=Callbacks()):
             'fliplr': (0, 0.0, 1.0),  # image flip left-right (probability)
             'mosaic': (1, 0.0, 1.0),  # image mixup (probability)
             'mixup': (1, 0.0, 1.0),  # image mixup (probability)
-            'copy_paste': (1, 0.0, 1.0)}  # segment copy-paste (probability)
+            'copy_paste': (1, 0.0, 1.0)
+        }  # segment copy-paste (probability)
 
         with open(opt.hyp, errors='ignore') as f:
             hyp = yaml.safe_load(f)  # load hyps dict

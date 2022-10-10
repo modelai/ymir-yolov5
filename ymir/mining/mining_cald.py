@@ -16,7 +16,7 @@ from ymir_exc import env, monitor
 from ymir_exc import result_writer as rw
 from ymir_exc.util import YmirStage, get_merged_config, get_ymir_process
 
-from mining.data_augment import cutout, horizontal_flip, intersect, resize, rotate
+from ymir.mining.data_augment import cutout, horizontal_flip, intersect, resize, rotate
 from utils.ymir_yolov5 import BBOX, CV_IMAGE, YmirYolov5
 
 

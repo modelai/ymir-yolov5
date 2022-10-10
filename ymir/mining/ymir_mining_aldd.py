@@ -21,7 +21,7 @@ from tqdm import tqdm
 from ymir_exc import result_writer as rw
 from ymir_exc.util import YmirStage, get_merged_config
 
-from mining.util import YmirDataset, load_image_file
+from ymir.mining.util import YmirDataset, load_image_file
 from utils.ymir_yolov5 import YmirYolov5
 
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
@@ -30,6 +30,7 @@ WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
 
 
 class ALDD(object):
+
     def __init__(self, ymir_cfg: edict):
         self.avg_pool_size = 9
         self.max_pool_size = 32
