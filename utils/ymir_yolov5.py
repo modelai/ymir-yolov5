@@ -24,33 +24,6 @@ BBOX = NDArray[Shape['*,4'], Any]
 CV_IMAGE = NDArray[Shape['*,*,3'], UInt8]
 
 
-def get_merged_config() -> edict:
-    """
-    merge ymir_config, executor_config and code_config
-    code_config will be overwritten by executor_config.
-    """
-
-    def get_code_config(code_config_file: str) -> dict:
-        if code_config_file is None:
-            return dict()
-        else:
-            with open(code_config_file, 'r') as f:
-                return yaml.safe_load(f)
-
-    exe_cfg = env.get_executor_config()
-    code_config_file = exe_cfg.get('code_config', None)
-    code_cfg = get_code_config(code_config_file)
-    code_cfg.update(exe_cfg)
-
-    merged_cfg = edict()
-    # the hyperparameter information
-    merged_cfg.param = code_cfg
-
-    # the ymir path information
-    merged_cfg.ymir = env.get_current_env()
-    return merged_cfg
-
-
 def get_weight_file(cfg: edict) -> str:
     """
     return the weight file path by priority
