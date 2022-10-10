@@ -3,6 +3,7 @@
 Common modules
 """
 
+import os
 import json
 import math
 import platform
@@ -40,13 +41,22 @@ def autopad(k, p=None, d=1):  # kernel, padding, dilation
 
 class Conv(nn.Module):
     # Standard convolution with args(ch_in, ch_out, kernel, stride, padding, groups, dilation, activation)
-    default_act = nn.SiLU()  # default activation
 
     def __init__(self, c1, c2, k=1, s=1, p=None, g=1, d=1, act=True):
         super().__init__()
         self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p, d), groups=g, dilation=d, bias=False)
         self.bn = nn.BatchNorm2d(c2)
-        self.act = self.default_act if act is True else act if isinstance(act, nn.Module) else nn.Identity()
+        self.default_act = nn.SiLU()  # default activation
+
+        activation = os.environ.get('ACTIVATION', None)
+        if activation is None:
+            self.act = self.default_act if act is True else act if isinstance(act, nn.Module) else nn.Identity()
+        else:
+            act_dict = dict(relu=nn.ReLU, relu6=nn.ReLU6, leakyrelu=nn.LeakyReLU, hardswish=nn.Hardswish, silu=nn.SiLU)
+
+            custom_act = act_dict[activation.lower()]()
+            self.act = custom_act if act is True else (act if isinstance(act, nn.Module) else nn.Identity())
+
 
     def forward(self, x):
         return self.act(self.bn(self.conv(x)))

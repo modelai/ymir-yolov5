@@ -7,15 +7,17 @@ from typing import Dict, List, Tuple
 
 import cv2
 import numpy as np
+from easydict import EasyDict as edict
 from nptyping import NDArray
 from scipy.stats import entropy
 from tqdm import tqdm
 from ymir_exc import dataset_reader as dr
 from ymir_exc import env, monitor
 from ymir_exc import result_writer as rw
+from ymir_exc.util import YmirStage, get_merged_config, get_ymir_process
 
 from mining.data_augment import cutout, horizontal_flip, intersect, resize, rotate
-from utils.ymir_yolov5 import BBOX, CV_IMAGE, YmirYolov5, YmirStage, get_ymir_process, get_merged_config
+from utils.ymir_yolov5 import BBOX, CV_IMAGE, YmirYolov5
 
 
 def split_result(result: NDArray) -> Tuple[BBOX, NDArray, NDArray]:
@@ -32,9 +34,24 @@ def split_result(result: NDArray) -> Tuple[BBOX, NDArray, NDArray]:
 
 
 class MiningCald(YmirYolov5):
+
+    def __init__(self, cfg: edict):
+        super().__init__(cfg)
+
+        if cfg.ymir.run_mining and cfg.ymir.run_infer:
+            # multiple task, run mining first, infer later
+            mining_task_idx = 0
+            task_num = 2
+        else:
+            mining_task_idx = 0
+            task_num = 1
+
+        self.task_idx = mining_task_idx
+        self.task_num = task_num
+
     def mining(self) -> List:
         N = dr.items_count(env.DatasetType.CANDIDATE)
-        monitor_gap = max(1, N // 100)
+        monitor_gap = max(1, N // 1000)
         idx = -1
         beta = 1.3
         mining_result = []
@@ -70,7 +87,7 @@ class MiningCald(YmirYolov5):
                     p = cls_scores_aug[aug_idx]
                     q = cls_scores[origin_idx]
                     m = (p + q) / 2.
-                    js = 0.5 * entropy(p, m) + 0.5 * entropy(q, m)
+                    js = 0.5 * entropy([p, 1 - p], [m, 1 - m]) + 0.5 * entropy([q, 1 - q], [m, 1 - m])
                     if js < 0:
                         js = 0
                     consistency_box = max_iou
@@ -86,7 +103,10 @@ class MiningCald(YmirYolov5):
             idx += 1
 
             if idx % monitor_gap == 0:
-                percent = get_ymir_process(stage=YmirStage.TASK, p=idx / N)
+                percent = get_ymir_process(stage=YmirStage.TASK,
+                                           p=idx / N,
+                                           task_idx=self.task_idx,
+                                           task_num=self.task_num)
                 monitor.write_monitor_logger(percent=percent)
 
         return mining_result
@@ -98,10 +118,7 @@ class MiningCald(YmirYolov5):
 
         return the predict result and augment bbox.
         """
-        aug_dict = dict(flip=horizontal_flip,
-                        cutout=cutout,
-                        rotate=rotate,
-                        resize=resize)
+        aug_dict = dict(flip=horizontal_flip, cutout=cutout, rotate=rotate, resize=resize)
 
         aug_bboxes = dict()
         aug_results = dict()

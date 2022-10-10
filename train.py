@@ -394,12 +394,13 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
 
                 # Save last, best and delete
                 torch.save(ckpt, last)
-                write_ymir_training_result(ymir_cfg, results, maps, rewrite=False)
                 if best_fitness == fi:
                     torch.save(ckpt, best)
                     write_ymir_training_result(ymir_cfg, results, maps, rewrite=True)
                 if opt.save_period > 0 and epoch % opt.save_period == 0:
                     torch.save(ckpt, w / f'epoch{epoch}.pt')
+                    weight_file = str(w / f'epoch{epoch}.pt')
+                    write_ymir_training_result(ymir_cfg, map50=results[2], id=f'epoch_{epoch}', files=[weight_file])
                 del ckpt
                 callbacks.run('on_model_save', last, epoch, final_epoch, best_fitness, fi)
 
@@ -496,11 +497,12 @@ def main(opt, callbacks=Callbacks()):
         print_args(vars(opt))
         check_git_status()
         check_requirements()
-
+    ymir_cfg = get_merged_config()
     # Resume (from specified or most recent last.pt)
     if opt.resume and not check_wandb_resume(opt) and not check_comet_resume(opt) and not opt.evolve:
-        last = Path(check_file(opt.resume) if isinstance(opt.resume, str) else get_latest_run())
-        opt_yaml = last.parent.parent / 'opt.yaml'  # train options yaml
+        last = Path(
+            check_file(opt.resume) if isinstance(opt.resume, str) else get_latest_run(ymir_cfg.ymir.input.root_dir))
+        opt_yaml = last.parent / 'opt.yaml'  # train options yaml
         opt_data = opt.data  # original dataset
         if opt_yaml.is_file():
             with open(opt_yaml, errors='ignore') as f:
@@ -522,7 +524,7 @@ def main(opt, callbacks=Callbacks()):
         if opt.name == 'cfg':
             opt.name = Path(opt.cfg).stem  # use model.yaml as name
         opt.save_dir = str(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))
-        ymir_cfg = get_merged_config()
+
         opt.ymir_cfg = ymir_cfg
 
 
