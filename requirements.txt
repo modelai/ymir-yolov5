@@ -53,3 +53,4 @@ imagesize>=1.3.0 # fast obtain image size without load image
 nptyping>=2.1.1 # numpy type hint
 typing-extensions>=4.2.0
 easydict>=1.9
+pudb # multiple process debug

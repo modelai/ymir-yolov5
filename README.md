@@ -43,3 +43,4 @@ docker build -t ymir/ymir-executor:ymir1.1.0-cuda111-yolov5-tmi --build-arg SERV
 - 2022/09/14: support change hyper-parameter `num_workers_per_gpu`
 - 2022/09/16: support change activation, view [rknn](https://github.com/airockchip/rknn_model_zoo/tree/main/models/vision/object_detection/yolov5-pytorch)
 - 2022/10/09: fix dist.destroy_process_group() hang
+- 2022/10/12: fix dist.barrier() hang, cald mining algorithm may timeout.

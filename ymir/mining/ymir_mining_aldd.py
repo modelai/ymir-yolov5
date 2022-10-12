@@ -140,6 +140,7 @@ def run(ymir_cfg: edict, ymir_yolov5: YmirYolov5):
     with open(ymir_cfg.ymir.input.candidate_index_file, 'r') as f:
         images = [line.strip() for line in f.readlines()]
 
+    max_barrier_times = (len(images) // max(1, WORLD_SIZE)) // batch_size_per_gpu
     # origin dataset
     if RANK != -1:
         images_rank = images[RANK::WORLD_SIZE]
@@ -160,7 +161,7 @@ def run(ymir_cfg: edict, ymir_yolov5: YmirYolov5):
     miner = ALDD(ymir_cfg)
     for idx, batch in enumerate(pbar):
         # batch-level sync, avoid 30min time-out error
-        if LOCAL_RANK != -1:
+        if LOCAL_RANK != -1 and idx < max_barrier_times:
             dist.barrier()
 
         with torch.no_grad():
@@ -187,6 +188,7 @@ def main() -> int:
         dist.init_process_group(backend="nccl" if dist.is_nccl_available() else "gloo")
 
     run(ymir_cfg, ymir_yolov5)
+    torch.cuda.empty_cache()
 
     # wait all process to save the mining result
     if LOCAL_RANK != -1:
@@ -204,8 +206,8 @@ def main() -> int:
         rw.write_mining_result(mining_result=ymir_mining_result)
 
     if LOCAL_RANK != -1:
-        print(f'rank: {RANK}, start destroy process group')
-        # dist.destroy_process_group()
+        print(f'rank: {RANK}, world_size: {WORLD_SIZE}, start destroy process group')
+        dist.destroy_process_group()
     return 0
 
 

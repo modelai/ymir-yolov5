@@ -3,6 +3,7 @@ ARG CUDA="11.1"
 ARG CUDNN="8"
 
 # cuda11.1 + pytorch 1.9.0 + cudnn8 not work!!!
+# 2022/10/10: pytorch/pytorch:1.12.1-cuda11.3-cudnn8-runtime
 FROM pytorch/pytorch:${PYTORCH}-cuda${CUDA}-cudnn${CUDNN}-runtime
 # support YMIR=1.0.0, 1.1.0 or 1.2.0
 ARG YMIR="1.1.0"
