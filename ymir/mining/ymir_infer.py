@@ -16,9 +16,9 @@ from tqdm import tqdm
 from ymir_exc import result_writer as rw
 from ymir_exc.util import YmirStage, get_merged_config
 
-from ymir.mining.util import YmirDataset, load_image_file
 from utils.general import scale_coords
 from utils.ymir_yolov5 import YmirYolov5
+from ymir.mining.util import YmirDataset, load_image_file
 
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
 RANK = int(os.getenv('RANK', -1))
@@ -27,7 +27,7 @@ WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
 
 def run(ymir_cfg: edict, ymir_yolov5: YmirYolov5):
     # eg: gpu_id = 1,3,5,7  for LOCAL_RANK = 2, will use gpu 5.
-    gpu = int(ymir_yolov5.gpu_id.split(',')[LOCAL_RANK])
+    gpu = max(LOCAL_RANK, 0)
     device = torch.device('cuda', gpu)
     ymir_yolov5.to(device)
 

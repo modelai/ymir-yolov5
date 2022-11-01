@@ -19,12 +19,12 @@ import argparse
 import math
 import os
 import random
+import subprocess
 import sys
 import time
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
-import subprocess
 
 import numpy as np
 import torch
@@ -41,6 +41,7 @@ if str(ROOT) not in sys.path:
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 from ymir_exc import monitor
+from ymir_exc.util import YmirStage, get_merged_config, get_ymir_process, write_ymir_training_result
 
 import val as validate  # for end-of-epoch mAP
 from models.experimental import attempt_load
@@ -62,7 +63,6 @@ from utils.metrics import fitness
 from utils.plots import plot_evolve
 from utils.torch_utils import (EarlyStopping, ModelEMA, de_parallel, select_device, smart_DDP, smart_optimizer,
                                smart_resume, torch_distributed_zero_first)
-from ymir_exc.util import YmirStage, get_merged_config, get_ymir_process, write_ymir_training_result
 
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
 RANK = int(os.getenv('RANK', -1))

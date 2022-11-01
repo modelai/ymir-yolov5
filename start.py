@@ -9,9 +9,10 @@ from ymir_exc import dataset_reader as dr
 from ymir_exc import env, monitor
 from ymir_exc import result_writer as rw
 from ymir_exc.util import (YmirStage, find_free_port, get_bool, get_merged_config, get_ymir_process)
+from ymir_exc.dataset_convert.ymir2yolov5 import convert_ymir_to_yolov5
 
 from models.experimental import attempt_download
-from utils.ymir_yolov5 import YmirYolov5, convert_ymir_to_yolov5, get_weight_file
+from utils.ymir_yolov5 import YmirYolov5, get_weight_file
 
 
 def start(cfg: edict) -> int:

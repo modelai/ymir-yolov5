@@ -45,6 +45,7 @@ class YmirYolov5(torch.nn.Module):
     """
     used for mining and inference to init detector and predict.
     """
+
     def __init__(self, cfg: edict, task='infer'):
         super().__init__()
         self.cfg = cfg
@@ -172,28 +173,3 @@ class YmirYolov5(torch.nn.Module):
     def write_monitor_logger(self, stage: YmirStage, p: float):
         monitor.write_monitor_logger(
             percent=get_ymir_process(stage=stage, p=p, task_idx=self.task_idx, task_num=self.task_num))
-
-
-def convert_ymir_to_yolov5(cfg: edict) -> str:
-    """
-    convert ymir format dataset to yolov5 format
-    generate data.yaml for training/mining/infer
-    cache to other docker images for better speed when use nfs-like file-system
-    """
-
-    cache_dir = cfg.param.get('cache_dir', '') or cfg.ymir.output.root_dir
-    data = dict(path=cache_dir,
-                nc=len(cfg.param.class_names),
-                names={idx: name
-                       for idx, name in enumerate(cfg.param.class_names)})
-    for split, prefix in zip(['train', 'val', 'test'], ['training', 'val', 'candidate']):
-        src_file = getattr(cfg.ymir.input, f'{prefix}_index_file')
-        if osp.exists(src_file):
-            shutil.copy(src_file, f'{cache_dir}/{split}.tsv')
-
-        data[split] = f'{split}.tsv'
-
-    data_yaml = osp.join(cache_dir, 'data.yaml')
-    with open(data_yaml, 'w') as fw:
-        fw.write(yaml.safe_dump(data))
-    return data_yaml
