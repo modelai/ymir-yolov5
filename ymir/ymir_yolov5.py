@@ -2,18 +2,14 @@
 utils function for ymir and yolov5
 """
 import os.path as osp
-import shutil
 from typing import Any, List
 
 import numpy as np
 import torch
-import yaml
 from easydict import EasyDict as edict
 from nptyping import NDArray, Shape, UInt8
-from ymir_exc import env
-from ymir_exc import monitor
 from ymir_exc import result_writer as rw
-from ymir_exc.util import YmirStage, get_bool, get_weight_files, get_ymir_process
+from ymir_exc.util import get_bool, get_weight_files
 
 from models.common import DetectMultiBackend
 from utils.augmentations import letterbox
@@ -46,22 +42,9 @@ class YmirYolov5(torch.nn.Module):
     used for mining and inference to init detector and predict.
     """
 
-    def __init__(self, cfg: edict, task='infer'):
+    def __init__(self, cfg: edict):
         super().__init__()
         self.cfg = cfg
-        if cfg.ymir.run_mining and cfg.ymir.run_infer:
-            # multiple task, run mining first, infer later
-            if task == 'infer':
-                self.task_idx = 1
-            elif task == 'mining':
-                self.task_idx = 0
-            else:
-                raise Exception(f'unknown task {task}')
-
-            self.task_num = 2
-        else:
-            self.task_idx = 0
-            self.task_num = 1
 
         self.gpu_id: str = str(cfg.param.get('gpu_id', '0'))
         device = select_device(self.gpu_id)  # will set CUDA_VISIBLE_DEVICES=self.gpu_id
@@ -77,10 +60,6 @@ class YmirYolov5(torch.nn.Module):
         self.stride = self.model.stride
         self.conf_thres: float = float(cfg.param.conf_thres)
         self.iou_thres: float = float(cfg.param.iou_thres)
-
-        # view convert_ymir_to_yolov5() for detail
-        cache_dir = cfg.param.get('cache_dir', '') or cfg.ymir.output.root_dir
-        self.data_yaml = osp.join(cache_dir, 'data.yaml')
 
         img_size = int(cfg.param.img_size)
         imgsz = [img_size, img_size]
@@ -115,11 +94,12 @@ class YmirYolov5(torch.nn.Module):
         if not weights:
             raise Exception("no weights file specified!")
 
+        data_yaml = osp.join(self.cfg.ymir.output.root_dir, 'data.yaml')
         model = DetectMultiBackend(
             weights=weights,
             device=device,
             dnn=False,  # not use opencv dnn for onnx inference
-            data=self.data_yaml)  # dataset.yaml path
+            data=data_yaml)  # dataset.yaml path
 
         return model
 
@@ -169,7 +149,3 @@ class YmirYolov5(torch.nn.Module):
             anns.append(ann)
 
         return anns
-
-    def write_monitor_logger(self, stage: YmirStage, p: float):
-        monitor.write_monitor_logger(
-            percent=get_ymir_process(stage=stage, p=p, task_idx=self.task_idx, task_num=self.task_num))

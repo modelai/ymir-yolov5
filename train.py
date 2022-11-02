@@ -40,8 +40,7 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
-from ymir_exc import monitor
-from ymir_exc.util import YmirStage, get_merged_config, get_ymir_process, write_ymir_training_result
+from ymir_exc.util import YmirStage, get_merged_config, write_ymir_training_result, write_ymir_monitor_process
 
 import val as validate  # for end-of-epoch mAP
 from models.experimental import attempt_load
@@ -271,8 +270,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
         # monitor process on epoch level
         if RANK in [0, -1] and (epoch - start_epoch) % monitor_epoch_gap == 0:
             epoch_percent = (epoch - start_epoch) / (epochs - start_epoch + 1)
-            percent = get_ymir_process(stage=YmirStage.TASK, p=epoch_percent)
-            monitor.write_monitor_logger(percent=percent)
+            write_ymir_monitor_process(ymir_cfg, task='training', naive_stage_percent=epoch_percent, stage=YmirStage.TASK)
         model.train()
 
         # Update image weights (optional, single-GPU only)
@@ -299,8 +297,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
             if RANK in [0, -1] and epoch == start_epoch and i % monitor_batch_gap == 0:
                 epoch_percent = (epoch - start_epoch) / (epochs - start_epoch + 1)
                 batch_percent = i / nb / (epochs - start_epoch + 1)
-                percent = get_ymir_process(stage=YmirStage.TASK, p=epoch_percent + batch_percent)
-                monitor.write_monitor_logger(percent=percent)
+                write_ymir_monitor_process(ymir_cfg, task='training', naive_stage_percent=batch_percent, stage=YmirStage.TASK)
             ni = i + nb * epoch  # number integrated batches (since train start)
             imgs = imgs.to(device, non_blocking=True).float() / 255  # uint8 to float32, 0-255 to 0.0-1.0
 
