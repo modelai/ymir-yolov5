@@ -54,9 +54,12 @@ class Conv(nn.Module):
         else:
             act_dict = dict(relu=nn.ReLU, relu6=nn.ReLU6, leakyrelu=nn.LeakyReLU, hardswish=nn.Hardswish, silu=nn.SiLU)
 
-            custom_act = act_dict[activation.lower()]()
+            if activation.lower() in act_dict:
+                custom_act = act_dict[activation.lower()]()
+            else:
+                # view https://pytorch.org/docs/stable/nn.html#non-linear-activations-weighted-sum-nonlinearity
+                custom_act = getattr(nn, activation)()
             self.act = custom_act if act is True else (act if isinstance(act, nn.Module) else nn.Identity())
-
 
     def forward(self, x):
         return self.act(self.bn(self.conv(x)))
@@ -303,9 +306,9 @@ class Expand(nn.Module):
     def forward(self, x):
         b, c, h, w = x.size()  # assert C / s ** 2 == 0, 'Indivisible gain'
         s = self.gain
-        x = x.view(b, s, s, c // s ** 2, h, w)  # x(1,2,2,16,80,80)
+        x = x.view(b, s, s, c // s**2, h, w)  # x(1,2,2,16,80,80)
         x = x.permute(0, 3, 4, 1, 5, 2).contiguous()  # x(1,16,80,2,80,2)
-        return x.view(b, c // s ** 2, h * s, w * s)  # x(1,16,160,160)
+        return x.view(b, c // s**2, h * s, w * s)  # x(1,16,160,160)
 
 
 class Concat(nn.Module):
@@ -462,7 +465,8 @@ class DetectMultiBackend(nn.Module):
                 delegate = {
                     'Linux': 'libedgetpu.so.1',
                     'Darwin': 'libedgetpu.1.dylib',
-                    'Windows': 'edgetpu.dll'}[platform.system()]
+                    'Windows': 'edgetpu.dll'
+                }[platform.system()]
                 interpreter = Interpreter(model_path=w, experimental_delegates=[load_delegate(delegate)])
             else:  # TFLite
                 LOGGER.info(f'Loading {w} for TensorFlow Lite inference...')
@@ -757,7 +761,8 @@ class Detections:
                                 'conf': conf,
                                 'cls': cls,
                                 'label': label,
-                                'im': save_one_box(box, im, file=file, save=save)})
+                                'im': save_one_box(box, im, file=file, save=save)
+                            })
                         else:  # all others
                             annotator.box_label(box, label if labels else '', color=colors(cls))
                     im = annotator.im
