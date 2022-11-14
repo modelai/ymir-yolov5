@@ -402,11 +402,11 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
                 torch.save(ckpt, last)
                 if best_fitness == fi:
                     torch.save(ckpt, best)
-                    write_ymir_training_result(ymir_cfg, map50=best_fitness, id='best', files=[str(best)])
+                    write_ymir_training_result(ymir_cfg, map50=best_fitness, id='yolov5_best', files=[str(best)])
                 if (not nosave) and opt.save_period > 0 and epoch % opt.save_period == 0:
                     torch.save(ckpt, w / f'epoch{epoch}.pt')
                     weight_file = str(w / f'epoch{epoch}.pt')
-                    write_ymir_training_result(ymir_cfg, map50=fi, id=f'epoch_{epoch}', files=[weight_file])
+                    write_ymir_training_result(ymir_cfg, map50=fi, id=f'yolov5_epoch_{epoch}', files=[weight_file])
                 del ckpt
                 callbacks.run('on_model_save', last, epoch, final_epoch, best_fitness, fi)
 
@@ -455,10 +455,10 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
 
         if nosave:
             # save best.pt and best.onnx
-            write_ymir_training_result(ymir_cfg, map50=best_fitness, id='best', files=[str(best), str(onnx_file)])
+            write_ymir_training_result(ymir_cfg, map50=best_fitness, id='yolov5_best', files=[str(best), str(onnx_file)])
         else:
             # set files = [] to save all files in /out/models
-            write_ymir_training_result(ymir_cfg, map50=best_fitness, id='best', files=[])
+            write_ymir_training_result(ymir_cfg, map50=best_fitness, id='yolov5_best', files=[])
 
     torch.cuda.empty_cache()
     return results
