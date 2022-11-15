@@ -18,7 +18,7 @@ from tqdm import tqdm
 from utils.general import scale_boxes
 from ymir.mining.util import (YmirDataset, collate_fn_with_fake_ann, load_image_file, load_image_file_with_ann,
                               update_consistency)
-from ymir.ymir_yolov5 import YmirYolov5
+from ymir.ymir_yolov5 import YmirYolov5, get_automl_config
 from ymir_exc import result_writer as rw
 from ymir_exc.util import YmirStage, get_merged_config, write_ymir_monitor_process
 
@@ -168,6 +168,7 @@ def run(ymir_cfg: edict, ymir_yolov5: YmirYolov5):
 
 def main() -> int:
     ymir_cfg = get_merged_config()
+    ymir_cfg = get_automl_config(ymir_cfg)
     ymir_yolov5 = YmirYolov5(ymir_cfg)
 
     if LOCAL_RANK != -1:

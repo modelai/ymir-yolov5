@@ -18,6 +18,12 @@ def check_train_batch_size(model, imgsz=640, amp=True):
         return autobatch(deepcopy(model).train(), imgsz)  # compute optimal batch size
 
 
+def check_val_batch_size(model, imgsz=640, amp=True):
+    # Check YOLOv5 training batch size
+    with torch.cuda.amp.autocast(amp):
+        return autobatch(deepcopy(model).eval(), imgsz)
+
+
 def autobatch(model, imgsz=640, fraction=0.8, batch_size=16):
     # Automatically estimate best YOLOv5 batch size to use `fraction` of available CUDA memory
     # Usage:

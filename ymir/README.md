@@ -41,3 +41,18 @@ docker build -t ymir/ymir-executor:ymir1.1.0-cuda111-yolov5-tmi --build-arg SERV
 - 2022/09/14: support change hyper-parameter `num_workers_per_gpu`
 - 2022/09/16: support change activation, view [rknn](https://github.com/airockchip/rknn_model_zoo/tree/main/models/vision/object_detection/yolov5-pytorch)
 - 2022/10/09: fix dist.destroy_process_group() hang
+
+## automl
+
+| fast | accurate | 作用 |
+| - | - | - |
+| True | False | 高性能 yolov5n |
+| True | True | 均衡 yolov5s |
+| False | True | 高精度 yolov5m |
+
+- [x] auto model size
+- [x] auto batch size
+- [ ] auto transfer learning (--freeze)
+- [ ] auto learning rate
+- [ ] auto infer
+- [ ] auto mining

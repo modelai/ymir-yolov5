@@ -16,7 +16,7 @@ import torch.utils.data as td
 from easydict import EasyDict as edict
 from tqdm import tqdm
 from ymir.mining.util import YmirDataset, load_image_file
-from ymir.ymir_yolov5 import YmirYolov5
+from ymir.ymir_yolov5 import YmirYolov5, get_automl_config
 from ymir_exc import result_writer as rw
 from ymir_exc.util import YmirStage, get_merged_config, write_ymir_monitor_process
 
@@ -85,6 +85,7 @@ def run(ymir_cfg: edict, ymir_yolov5: YmirYolov5):
 
 def main() -> int:
     ymir_cfg = get_merged_config()
+    ymir_cfg = get_automl_config(ymir_cfg)
     ymir_yolov5 = YmirYolov5(ymir_cfg)
 
     if LOCAL_RANK != -1:

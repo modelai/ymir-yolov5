@@ -17,7 +17,7 @@ from ymir_exc import result_writer as rw
 from ymir_exc.util import YmirStage, get_merged_config, write_ymir_monitor_process
 
 from utils.general import scale_boxes
-from ymir.ymir_yolov5 import YmirYolov5
+from ymir.ymir_yolov5 import YmirYolov5, get_automl_config
 from ymir.mining.util import YmirDataset, load_image_file
 
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
@@ -92,6 +92,7 @@ def run(ymir_cfg: edict, ymir_yolov5: YmirYolov5):
 
 def main() -> int:
     ymir_cfg = get_merged_config()
+    ymir_cfg = get_automl_config(ymir_cfg)
     ymir_yolov5 = YmirYolov5(ymir_cfg)
 
     if LOCAL_RANK != -1:

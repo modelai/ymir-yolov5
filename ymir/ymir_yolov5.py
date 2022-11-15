@@ -2,12 +2,13 @@
 utils function for ymir and yolov5
 """
 import os.path as osp
-from typing import Any, List
+from typing import Any, List, Tuple
 
 import numpy as np
 import torch
 from easydict import EasyDict as edict
 from nptyping import NDArray, Shape, UInt8
+import yaml
 from ymir_exc import result_writer as rw
 from ymir_exc.util import get_bool, get_weight_files
 
@@ -15,6 +16,8 @@ from models.common import DetectMultiBackend
 from utils.augmentations import letterbox
 from utils.general import check_img_size, non_max_suppression, scale_boxes
 from utils.torch_utils import select_device
+from utils.autobatch import check_train_batch_size, check_val_batch_size
+from models.yolo import Model
 
 BBOX = NDArray[Shape['*,4'], Any]
 CV_IMAGE = NDArray[Shape['*,*,3'], UInt8]
@@ -149,3 +152,66 @@ class YmirYolov5(torch.nn.Module):
             anns.append(ann)
 
         return anns
+
+
+def get_batch_size(ymir_cfg: edict) -> int:
+    device = 'cuda:0'
+    model_name = ymir_cfg.param.model
+    nc = len(ymir_cfg.param.class_names)
+    imgsz = ymir_cfg.param.img_size
+    with open('data/hyps/hyp.scratch-low.yaml', 'r', errors='ignore') as fp:
+        hyp = yaml.safe_load(fp)
+    model = Model(f'models/{model_name}.yaml', ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)
+
+    if ymir_cfg.ymir.run_training:
+        return check_train_batch_size(model, imgsz=imgsz, amp=True)
+    else:
+        return check_val_batch_size(model, imgsz=imgsz, amp=True)
+
+
+def get_automl_config(cfg: edict) -> edict:
+    """
+    use automl to modify config
+    """
+    fast = get_bool(cfg, key='fast', default_value=False)
+    accurate = get_bool(cfg, key='accurate', default_value=True)
+
+    model = cfg.param.get('model', '')
+    if not model:
+        if fast and not accurate:
+            model = 'yolov5n'
+        elif fast and accurate:
+            model = 'yolov5s'
+        else:
+            model = 'yolov5m'
+
+        cfg.param.model = model
+
+    if accurate:
+        cfg.param.sync_bn = True
+        automl_epochs = 300
+    else:
+        cfg.param.sync_bn = False
+        automl_epochs = 100
+
+    if not cfg.param.get('epochs', ''):
+        cfg.param.epochs = automl_epochs
+
+    cfg.param.save_best_only = True
+    cfg.param.save_period = 10
+    cfg.param.opset = 11
+    cfg.param.args_options = ''
+
+    # mining
+    cfg.param.mining_algorithm = 'aldd'
+    cfg.param.class_distribution_scores = ''
+    cfg.param.conf_thres = 0.25
+    cfg.param.iou_thres = 0.45
+    cfg.param.pin_memory = True
+
+    # tmi
+    cfg.param.img_size = 640
+    raw_batch_size_per_gpu = get_batch_size(cfg)
+    cfg.param.num_workers_per_gpu = nw = min(4, raw_batch_size_per_gpu)
+    cfg.param.batch_size_per_gpu = max(1, (raw_batch_size_per_gpu // nw) * nw)
+    return cfg
