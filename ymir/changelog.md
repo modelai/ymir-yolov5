@@ -1,5 +1,8 @@
 # change log
 
+## 2022-11-02
+- 添加 entropy/random 挖掘算法
+
 ## 2022-05-30
 
 adapt yolov5 to ymir live code executor

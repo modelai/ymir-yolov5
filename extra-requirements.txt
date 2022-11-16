@@ -1,6 +1,6 @@
 # Base ----------------------------------------
 matplotlib>=3.2.2
-numpy>=1.18.5
+numpy>=1.20.0
 opencv-python>=4.1.1
 Pillow>=7.1.2
 PyYAML>=5.3.1
@@ -23,5 +23,6 @@ seaborn>=0.11.0
 
 # Ymir  ---------------------------------------
 imagesize # fast obtain image size without load image
-nptyping # numpy type hint
+nptyping>=2.1.1 # numpy type hint
+typing-extensions
 easydict # merge two dict
