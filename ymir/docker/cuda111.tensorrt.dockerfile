@@ -8,6 +8,9 @@ ENV YMIR_VERSION=$YMIR
 # fix font download directory
 ENV YOLOV5_CONFIG_DIR='/app/data'
 
+ENV TZ=Asia/Shanghai
+ENV DEBIAN_FRONTEND=noninteractive
+
 # change apt and pypy mirrors
 RUN sed -i 's#http://archive.ubuntu.com#https://mirrors.ustc.edu.cn#g' /etc/apt/sources.list \
     && sed -i 's#http://security.ubuntu.com#https://mirrors.ustc.edu.cn#g' /etc/apt/sources.list \
@@ -15,7 +18,12 @@ RUN sed -i 's#http://archive.ubuntu.com#https://mirrors.ustc.edu.cn#g' /etc/apt/
 
 # apt install required packages
 RUN apt update && \
-    apt install -y zip htop vim libgl1-mesa-glx
+    apt install -y zip htop vim libgl1-mesa-glx && \
+    && apt install -y tzdata \
+    && ln -fs /usr/share/zoneinfo/${TZ} /etc/localtime \
+    && echo ${TZ} > /etc/timezone \
+    && dpkg-reconfigure --frontend noninteractive tzdata \
+    && rm -rf /var/lib/apt/lists/*
 
 # install ymir-exc
 RUN pip install "git+https://github.com/modelai/ymir-executor-sdk.git@ymir1.3.0"
