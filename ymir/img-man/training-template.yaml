@@ -7,7 +7,8 @@
 # pretrained_model_params: []
 # class_names: []
 
-shm_size: '128G'
+shm_size: '256G'
+gpu_index: '0,1,2,3,4,5,6,7'
 export_format: 'ark:raw'
 model: 'yolov5s'
 batch_size_per_gpu: 16
