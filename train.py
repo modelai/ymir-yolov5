@@ -40,7 +40,7 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
-from ymir_exc.util import YmirStage, get_merged_config, write_ymir_training_result, write_ymir_monitor_process
+from ymir_exc.util import YmirStage, get_merged_config, write_ymir_monitor_process, write_ymir_training_result
 
 import val as validate  # for end-of-epoch mAP
 from models.experimental import attempt_load

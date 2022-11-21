@@ -13,9 +13,10 @@ import torch
 import torch.distributed as dist
 from easydict import EasyDict as edict
 from tqdm import tqdm
-from ymir.ymir_yolov5 import YmirYolov5
 from ymir_exc import result_writer as rw
 from ymir_exc.util import YmirStage, get_merged_config, write_ymir_monitor_process
+
+from ymir.ymir_yolov5 import YmirYolov5
 
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
 RANK = int(os.getenv('RANK', -1))
@@ -40,7 +41,10 @@ def run(ymir_cfg: edict, ymir_yolov5: YmirYolov5):
     pbar = tqdm(images_rank) if RANK == 0 else images_rank
     for idx, image in enumerate(pbar):
         if RANK in [-1, 0]:
-            write_ymir_monitor_process(ymir_cfg, task='mining', naive_stage_percent=idx / dataset_size, stage=YmirStage.TASK)
+            write_ymir_monitor_process(ymir_cfg,
+                                       task='mining',
+                                       naive_stage_percent=idx / dataset_size,
+                                       stage=YmirStage.TASK)
         mining_results[image] = random.random()
 
     torch.save(mining_results, f'/out/mining_results_{max(0,RANK)}.pt')

@@ -15,10 +15,11 @@ import torch.distributed as dist
 import torch.utils.data as td
 from easydict import EasyDict as edict
 from tqdm import tqdm
-from ymir.mining.util import YmirDataset, load_image_file
-from ymir.ymir_yolov5 import YmirYolov5
 from ymir_exc import result_writer as rw
 from ymir_exc.util import YmirStage, get_merged_config, write_ymir_monitor_process
+
+from ymir.mining.util import YmirDataset, load_image_file
+from ymir.ymir_yolov5 import YmirYolov5
 
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
 RANK = int(os.getenv('RANK', -1))
@@ -70,7 +71,10 @@ def run(ymir_cfg: edict, ymir_yolov5: YmirYolov5):
             pred = ymir_yolov5.forward(batch['image'].float().to(device), nms=False)
 
         if RANK in [-1, 0]:
-            write_ymir_monitor_process(ymir_cfg, task='mining', naive_stage_percent=idx * batch_size_per_gpu / dataset_size, stage=YmirStage.TASK)
+            write_ymir_monitor_process(ymir_cfg,
+                                       task='mining',
+                                       naive_stage_percent=idx * batch_size_per_gpu / dataset_size,
+                                       stage=YmirStage.TASK)
         for inner_idx, det in enumerate(pred):  # per image
             image_file = batch['image_file'][inner_idx]
             if len(det):
