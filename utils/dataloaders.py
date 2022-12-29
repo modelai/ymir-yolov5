@@ -25,7 +25,7 @@ import torch.nn.functional as F
 import torchvision
 import yaml
 from PIL import ExifTags, Image, ImageOps
-from torch.utils.data import DataLoader, Dataset, dataloader, distributed
+from torch.utils.data import DataLoader, Dataset, IterableDataset, dataloader, distributed
 from tqdm import tqdm
 
 from utils.augmentations import (Albumentations, augment_hsv, classify_albumentations, classify_transforms, copy_paste,
@@ -137,8 +137,10 @@ def create_dataloader(path,
     batch_size = min(batch_size, len(dataset))
     nd = torch.cuda.device_count()  # number of CUDA devices
     nw = min([os.cpu_count() // max(nd, 1), batch_size if batch_size > 1 else 0, workers])  # number of workers
-    sampler = None if rank == -1 else distributed.DistributedSampler(dataset, shuffle=shuffle)
-    loader = DataLoader if image_weights else InfiniteDataLoader  # only DataLoader allows for attribute updates
+    # sampler = None if rank == -1 else distributed.DistributedSampler(dataset, shuffle=shuffle)
+    sampler = None
+    # loader = DataLoader if image_weights else InfiniteDataLoader  # only DataLoader allows for attribute updates
+    loader = DataLoader
     generator = torch.Generator()
     generator.manual_seed(6148914691236517205 + RANK)
     return loader(dataset,
@@ -430,7 +432,7 @@ def img2label_paths(img_paths):
     return [sb.join(x.rsplit(sa, 1)).rsplit('.', 1)[0] + '.txt' for x in img_paths]
 
 
-class LoadImagesAndLabels(Dataset):
+class LoadImagesAndLabels(IterableDataset):
     # YOLOv5 train_loader/val_loader, loads images and labels for training and validation
     cache_version = 0.6  # dataset labels *.cache version
     rand_interp_methods = [cv2.INTER_NEAREST, cv2.INTER_LINEAR, cv2.INTER_CUBIC, cv2.INTER_AREA, cv2.INTER_LANCZOS4]
@@ -585,6 +587,8 @@ class LoadImagesAndLabels(Dataset):
                 pbar.desc = f'{prefix}Caching images ({b / gb:.1f}GB {cache_images})'
             pbar.close()
 
+        self.count = -1
+
     def check_cache_ram(self, safety_margin=0.1, prefix=''):
         # Check image caching requirements vs available memory
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
@@ -643,11 +647,27 @@ class LoadImagesAndLabels(Dataset):
     def __len__(self):
         return len(self.im_files)
 
-    # def __iter__(self):
-    #     self.count = -1
-    #     print('ran dataset iter')
-    #     #self.shuffled_vector = np.random.permutation(self.nF) if self.augment else np.arange(self.nF)
-    #     return self
+    def __iter__(self):
+        N = len(self.im_files)
+        rank = int(os.getenv('RANK', 0))
+        world_size = int(os.getenv('WORLD_SIZE', 1))
+
+        worker_info = torch.utils.data.get_worker_info()
+        if worker_info is None:
+            start_index = 0
+            num_workers_per_gpu = 1
+            worker_id_per_gpu = 0
+        else:
+            num_workers_per_gpu = worker_info.num_workers
+            worker_id_per_gpu = worker_info.id
+
+        total_workers = num_workers_per_gpu * world_size
+        per_worker = int(math.ceil(N / total_workers))
+        worker_id = (rank * num_workers_per_gpu) + worker_id_per_gpu
+        start_index = worker_id * per_worker
+
+        for index in range(start_index, start_index + per_worker):
+            yield self.__getitem__(index % N)
 
     def __getitem__(self, index):
         index = self.indices[index]  # linear, shuffled, or image_weights
