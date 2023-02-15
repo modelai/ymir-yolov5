@@ -50,13 +50,13 @@ from utils.autobatch import check_train_batch_size
 from utils.callbacks import Callbacks
 from utils.dataloaders import create_dataloader
 from utils.downloads import attempt_download, is_url
-from utils.general import (LOGGER, check_amp, check_dataset, check_file, check_git_status, check_img_size,
-                           check_requirements, check_suffix, check_yaml, colorstr, get_latest_run, increment_path,
-                           init_seeds, intersect_dicts, labels_to_class_weights, labels_to_image_weights, methods,
-                           one_cycle, print_args, print_mutation, strip_optimizer, yaml_save)
+from utils.general import (LOGGER, TQDM_BAR_FORMAT, check_amp, check_dataset, check_file, check_git_info,
+                           check_git_status, check_img_size, check_requirements, check_suffix, check_yaml, colorstr,
+                           get_latest_run, increment_path, init_seeds, intersect_dicts, labels_to_class_weights,
+                           labels_to_image_weights, methods, one_cycle, print_args, print_mutation, strip_optimizer,
+                           yaml_save)
 from utils.loggers import Loggers
 from utils.loggers.comet.comet_utils import check_comet_resume
-from utils.loggers.wandb.wandb_utils import check_wandb_resume
 from utils.loss import ComputeLoss
 from utils.metrics import fitness
 from utils.plots import plot_evolve
@@ -66,6 +66,7 @@ from utils.torch_utils import (EarlyStopping, ModelEMA, de_parallel, select_devi
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
 RANK = int(os.getenv('RANK', -1))
 WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
+GIT_INFO = check_git_info()
 
 
 def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
@@ -172,6 +173,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
 
     # Resume
     best_fitness, start_epoch = 0.0, 0
+    best_evaluation_result = dict(mAP=0, mAR=0)
     if pretrained:
         if resume:
             best_fitness, start_epoch, epochs = smart_resume(ckpt, optimizer, ema, weights, epochs, resume)
@@ -203,7 +205,8 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
                                               image_weights=opt.image_weights,
                                               quad=opt.quad,
                                               prefix=colorstr('train: '),
-                                              shuffle=True)
+                                              shuffle=True,
+                                              seed=opt.seed)
     labels = np.concatenate(dataset.labels, 0)
     mlc = int(labels[:, 0].max())  # max label class
     assert mlc < nc, f'Label class {mlc} exceeds nc={nc} in {data}. Possible class labels are 0-{nc - 1}'
@@ -270,7 +273,10 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
         # monitor process on epoch level
         if RANK in [0, -1] and (epoch - start_epoch) % monitor_epoch_gap == 0:
             epoch_percent = (epoch - start_epoch) / (epochs - start_epoch + 1)
-            write_ymir_monitor_process(ymir_cfg, task='training', naive_stage_percent=epoch_percent, stage=YmirStage.TASK)
+            write_ymir_monitor_process(ymir_cfg,
+                                       task='training',
+                                       naive_stage_percent=epoch_percent,
+                                       stage=YmirStage.TASK)
         model.train()
 
         # Update image weights (optional, single-GPU only)
@@ -289,7 +295,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
         pbar = enumerate(train_loader)
         LOGGER.info(('\n' + '%11s' * 7) % ('Epoch', 'GPU_mem', 'box_loss', 'obj_loss', 'cls_loss', 'Instances', 'Size'))
         if RANK in {-1, 0}:
-            pbar = tqdm(pbar, total=nb, bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}')  # progress bar
+            pbar = tqdm(pbar, total=nb, bar_format=TQDM_BAR_FORMAT)  # progress bar
         optimizer.zero_grad()
         for i, (imgs, targets, paths, _) in pbar:  # batch -------------------------------------------------------------
             callbacks.run('on_train_batch_start')
@@ -297,7 +303,10 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
             if RANK in [0, -1] and epoch == start_epoch and i % monitor_batch_gap == 0:
                 epoch_percent = (epoch - start_epoch) / (epochs - start_epoch + 1)
                 batch_percent = i / nb / (epochs - start_epoch + 1)
-                write_ymir_monitor_process(ymir_cfg, task='training', naive_stage_percent=batch_percent, stage=YmirStage.TASK)
+                write_ymir_monitor_process(ymir_cfg,
+                                           task='training',
+                                           naive_stage_percent=batch_percent,
+                                           stage=YmirStage.TASK)
             ni = i + nb * epoch  # number integrated batches (since train start)
             imgs = imgs.to(device, non_blocking=True).float() / 255  # uint8 to float32, 0-255 to 0.0-1.0
 
@@ -381,6 +390,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
             stop = stopper(epoch=epoch, fitness=fi)  # early stop check
             if fi > best_fitness:
                 best_fitness = fi
+                best_evaluation_result = dict(mAP=results[2], mAR=results[1])
             log_vals = list(mloss) + list(results) + lr
             callbacks.run('on_fit_epoch_end', log_vals, epoch, best_fitness, fi)
 
@@ -393,20 +403,26 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
                     'ema': deepcopy(ema.ema).half(),
                     'updates': ema.updates,
                     'optimizer': optimizer.state_dict(),
-                    'wandb_id': loggers.wandb.wandb_run.id if loggers.wandb else None,
                     'opt': vars(opt),
                     'date': datetime.now().isoformat()
                 }
 
                 # Save last, best and delete
                 torch.save(ckpt, last)
+                evaluation_result = dict(mAP=results[2], mAR=results[1])
                 if best_fitness == fi:
                     torch.save(ckpt, best)
-                    write_ymir_training_result(ymir_cfg, map50=best_fitness, id='yolov5_best', files=[str(best)])
+                    write_ymir_training_result(ymir_cfg,
+                                               evaluation_result=evaluation_result,
+                                               id='yolov5_best',
+                                               files=[str(best)])
                 if (not nosave) and opt.save_period > 0 and epoch % opt.save_period == 0:
                     torch.save(ckpt, w / f'epoch{epoch}.pt')
                     weight_file = str(w / f'epoch{epoch}.pt')
-                    write_ymir_training_result(ymir_cfg, map50=fi, id=f'yolov5_epoch_{epoch}', files=[weight_file])
+                    write_ymir_training_result(ymir_cfg,
+                                               evaluation_result=evaluation_result,
+                                               id=f'yolov5_epoch_{epoch}',
+                                               files=[weight_file])
                 del ckpt
                 callbacks.run('on_model_save', last, epoch, final_epoch, best_fitness, fi)
 
@@ -455,10 +471,10 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
 
         if nosave:
             # save best.pt and best.onnx
-            write_ymir_training_result(ymir_cfg, map50=best_fitness, id='yolov5_best', files=[str(best), str(onnx_file)])
-        else:
-            # set files = [] to save all files in /out/models
-            write_ymir_training_result(ymir_cfg, map50=best_fitness, id='yolov5_best', files=[])
+            write_ymir_training_result(ymir_cfg,
+                                       evaluation_result=best_evaluation_result,
+                                       id='yolov5_best',
+                                       files=[str(best), str(onnx_file)])
 
     torch.cuda.empty_cache()
     return results
@@ -470,7 +486,7 @@ def parse_opt(known=False):
     parser.add_argument('--cfg', type=str, default='', help='model.yaml path')
     parser.add_argument('--data', type=str, default=ROOT / 'data/coco128.yaml', help='dataset.yaml path')
     parser.add_argument('--hyp', type=str, default=ROOT / 'data/hyps/hyp.scratch-low.yaml', help='hyperparameters path')
-    parser.add_argument('--epochs', type=int, default=300, help='total training epochs')
+    parser.add_argument('--epochs', type=int, default=100, help='total training epochs')
     parser.add_argument('--batch-size', type=int, default=16, help='total batch size for all GPUs, -1 for autobatch')
     parser.add_argument('--imgsz', '--img', '--img-size', type=int, default=640, help='train, val image size (pixels)')
     parser.add_argument('--rect', action='store_true', help='rectangular training')
@@ -481,7 +497,7 @@ def parse_opt(known=False):
     parser.add_argument('--noplots', action='store_true', help='save no plot files')
     parser.add_argument('--evolve', type=int, nargs='?', const=300, help='evolve hyperparameters for x generations')
     parser.add_argument('--bucket', type=str, default='', help='gsutil bucket')
-    parser.add_argument('--cache', type=str, nargs='?', const='ram', help='--cache images in "ram" (default) or "disk"')
+    parser.add_argument('--cache', type=str, nargs='?', const='ram', help='image --cache ram/disk')
     parser.add_argument('--image-weights', action='store_true', help='use weighted image selection for training')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--multi-scale', action='store_true', help='vary img-size +/- 50%%')
@@ -518,7 +534,7 @@ def main(opt, callbacks=Callbacks()):
         # check_requirements()
     ymir_cfg = get_merged_config()
     # Resume (from specified or most recent last.pt)
-    if opt.resume and not check_wandb_resume(opt) and not check_comet_resume(opt) and not opt.evolve:
+    if opt.resume and not check_comet_resume(opt) and not opt.evolve:
         last = Path(
             check_file(opt.resume) if isinstance(opt.resume, str) else get_latest_run(ymir_cfg.ymir.input.root_dir))
         opt_yaml = last.parent / 'opt.yaml'  # train options yaml
@@ -646,7 +662,9 @@ def main(opt, callbacks=Callbacks()):
             results = train(hyp.copy(), opt, device, callbacks)
             callbacks = Callbacks()
             # Write mutation results
-            print_mutation(results, hyp.copy(), save_dir, opt.bucket)
+            keys = ('metrics/precision', 'metrics/recall', 'metrics/mAP_0.5', 'metrics/mAP_0.5:0.95', 'val/box_loss',
+                    'val/obj_loss', 'val/cls_loss')
+            print_mutation(keys, results, hyp.copy(), save_dir, opt.bucket)
 
         # Plot results
         plot_evolve(evolve_csv)

@@ -28,7 +28,7 @@ RUN apt update && \
     && rm -rf /var/lib/apt/lists/*
 
 # install ymir-exc and object_detection_metrics
-RUN pip install "git+https://github.com/modelai/ymir-executor-sdk.git@ymir1.3.0" && \
+RUN pip install "git+https://github.com/modelai/ymir-executor-sdk.git@ymir2.1.0" && \
     pip install "git+https://github.com/modelai/review_object_detection_metrics@ymir"
 
 COPY . /yolov5
