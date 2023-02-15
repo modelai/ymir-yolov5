@@ -46,7 +46,7 @@ class YmirYolov5(torch.nn.Module):
         super().__init__()
         self.cfg = cfg
 
-        self.gpu_id: str = str(cfg.param.get('gpu_id', '0'))
+        self.gpu_id: str = str(cfg.param.get('gpu_id', '')) or 'cpu'
         device = select_device(self.gpu_id)  # will set CUDA_VISIBLE_DEVICES=self.gpu_id
         self.gpu_count: int = len(self.gpu_id.split(',')) if self.gpu_id else 0
         self.batch_size_per_gpu: int = int(cfg.param.get('batch_size_per_gpu', 4))
