@@ -173,6 +173,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
 
     # Resume
     best_fitness, start_epoch = 0.0, 0
+    best_evaluation_result = dict(mAP=0, mAR=0)
     if pretrained:
         if resume:
             best_fitness, start_epoch, epochs = smart_resume(ckpt, optimizer, ema, weights, epochs, resume)
@@ -389,6 +390,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
             stop = stopper(epoch=epoch, fitness=fi)  # early stop check
             if fi > best_fitness:
                 best_fitness = fi
+                best_evaluation_result = dict(mAP=results[2], mAR=results[1])
             log_vals = list(mloss) + list(results) + lr
             callbacks.run('on_fit_epoch_end', log_vals, epoch, best_fitness, fi)
 
@@ -407,13 +409,20 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
 
                 # Save last, best and delete
                 torch.save(ckpt, last)
+                evaluation_result = dict(mAP=results[2], mAR=results[1])
                 if best_fitness == fi:
                     torch.save(ckpt, best)
-                    write_ymir_training_result(ymir_cfg, map50=best_fitness, id='yolov5_best', files=[str(best)])
+                    write_ymir_training_result(ymir_cfg,
+                                               evaluation_result=evaluation_result,
+                                               id='yolov5_best',
+                                               files=[str(best)])
                 if (not nosave) and opt.save_period > 0 and epoch % opt.save_period == 0:
                     torch.save(ckpt, w / f'epoch{epoch}.pt')
                     weight_file = str(w / f'epoch{epoch}.pt')
-                    write_ymir_training_result(ymir_cfg, map50=fi, id=f'yolov5_epoch_{epoch}', files=[weight_file])
+                    write_ymir_training_result(ymir_cfg,
+                                               evaluation_result=evaluation_result,
+                                               id=f'yolov5_epoch_{epoch}',
+                                               files=[weight_file])
                 del ckpt
                 callbacks.run('on_model_save', last, epoch, final_epoch, best_fitness, fi)
 
@@ -463,12 +472,9 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
         if nosave:
             # save best.pt and best.onnx
             write_ymir_training_result(ymir_cfg,
-                                       map50=best_fitness,
+                                       evaluation_result=best_evaluation_result,
                                        id='yolov5_best',
                                        files=[str(best), str(onnx_file)])
-        else:
-            # set files = [] to save all files in /out/models
-            write_ymir_training_result(ymir_cfg, map50=best_fitness, id='yolov5_best', files=[])
 
     torch.cuda.empty_cache()
     return results
