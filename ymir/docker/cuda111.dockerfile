@@ -5,15 +5,11 @@ ARG CUDNN="8"
 # cuda11.1 + pytorch 1.9.0 + cudnn8 not work!!!
 # 2022/10/10: pytorch/pytorch:1.12.1-cuda11.3-cudnn8-runtime
 FROM pytorch/pytorch:${PYTORCH}-cuda${CUDA}-cudnn${CUDNN}-runtime
-# support YMIR=1.0.0, 1.1.0 or 1.2.0
-ARG YMIR="1.1.0"
-
 
 ENV TORCH_CUDA_ARCH_LIST="6.0 6.1 7.0+PTX"
 ENV TORCH_NVCC_FLAGS="-Xfatbin -compress-all"
 ENV CMAKE_PREFIX_PATH="$(dirname $(which conda))/../"
 ENV LANG=C.UTF-8
-ENV YMIR_VERSION=$YMIR
 ENV YOLOV5_CONFIG_DIR='/app/data'
 
 # Install linux package
@@ -30,7 +26,7 @@ RUN pip install "git+https://github.com/modelai/ymir-executor-sdk.git@ymir2.1.0"
 
 # Copy file from host to docker and install requirements
 COPY . /app
-RUN mkdir /img-man && mv /app/ymir/img-man/*-template.yaml /img-man/
+RUN mkdir /img-man && mv /app/ymir/img-man/*.yaml /img-man/
 
 # Download pretrained weight and font file
 RUN cd /app && bash data/scripts/download_weights.sh \

@@ -1,0 +1,37 @@
+ARG PYTORCH="1.8.1"
+ARG CUDA="10.2"
+ARG CUDNN="7"
+
+# docker build -t youdaoyzbx/ymir-executor:ymir2.1.0-yolov5-cu102-tmi -f cuda102.dockerfile.cn .
+FROM pytorch/pytorch:${PYTORCH}-cuda${CUDA}-cudnn${CUDNN}-runtime
+
+ENV TORCH_CUDA_ARCH_LIST="6.0 6.1 7.0+PTX"
+ENV TORCH_NVCC_FLAGS="-Xfatbin -compress-all"
+ENV CMAKE_PREFIX_PATH="$(dirname $(which conda))/../"
+ENV LANG=C.UTF-8
+ENV PYTHONPATH=.
+
+# Install linux package
+RUN	sed -i 's#http://archive.ubuntu.com#https://mirrors.ustc.edu.cn#g' /etc/apt/sources.list \
+    && sed -i 's#http://security.ubuntu.com#https://mirrors.ustc.edu.cn#g' /etc/apt/sources.list \
+    && apt-get update && apt-get install -y ninja-build gnupg2 git libglib2.0-0 \
+    libgl1-mesa-glx curl wget zip vim build-essential \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY ./requirements.txt /workspace/
+# install ymir-exc sdk
+RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+    && pip install "git+https://github.com/yzbx/ymir-executor-sdk.git@ymir2.1.0" \
+    && pip install -r /workspace/requirements.txt
+
+# Copy file from host to docker and install requirements
+COPY . /app/
+RUN mkdir -p /img-man && mv /app/*.yaml /img-man/ \
+    && mkdir -p /root/.config/Ultralytics \
+    && mv /app/weights/*.pt /app \
+    && mv /app/weights/Arial.ttf /root/.config/Ultralytics
+
+WORKDIR /app
+RUN echo "python3 /app/start.py" > /usr/bin/start.sh
+CMD bash /usr/bin/start.sh

@@ -390,7 +390,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
             stop = stopper(epoch=epoch, fitness=fi)  # early stop check
             if fi > best_fitness:
                 best_fitness = fi
-                best_evaluation_result = dict(mAP=results[2], mAR=results[1])
+                best_evaluation_result = dict(mAP=results[2].item(), mAR=results[1].item())
             log_vals = list(mloss) + list(results) + lr
             callbacks.run('on_fit_epoch_end', log_vals, epoch, best_fitness, fi)
 
@@ -409,7 +409,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
 
                 # Save last, best and delete
                 torch.save(ckpt, last)
-                evaluation_result = dict(mAP=results[2], mAR=results[1])
+                evaluation_result = dict(mAP=results[2].item(), mAR=results[1].item())
                 if best_fitness == fi:
                     torch.save(ckpt, best)
                     write_ymir_training_result(ymir_cfg,

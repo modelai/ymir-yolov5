@@ -3,14 +3,11 @@ ARG CUDA="10.2"
 ARG CUDNN="7"
 
 FROM pytorch/pytorch:${PYTORCH}-cuda${CUDA}-cudnn${CUDNN}-runtime
-# support YMIR=1.0.0, 1.1.0 or 1.2.0
-ARG YMIR="1.1.0"
 
 ENV TORCH_CUDA_ARCH_LIST="6.0 6.1 7.0+PTX"
 ENV TORCH_NVCC_FLAGS="-Xfatbin -compress-all"
 ENV CMAKE_PREFIX_PATH="$(dirname $(which conda))/../"
 ENV LANG=C.UTF-8
-ENV YMIR_VERSION=${YMIR}
 ENV YOLOV5_CONFIG_DIR='/app/data'
 
 # Install linux package
@@ -25,7 +22,7 @@ RUN pip install "git+https://github.com/modelai/ymir-executor-sdk.git@ymir2.1.0"
 
 # Copy file from host to docker and install requirements
 COPY . /app
-RUN mkdir /img-man && mv /app/ymir/img-man/*-template.yaml /img-man/ \
+RUN mkdir /img-man && mv /app/ymir/img-man/*.yaml /img-man/ \
     && pip install -r /app/requirements.txt
 
 # Download pretrained weight and font file
