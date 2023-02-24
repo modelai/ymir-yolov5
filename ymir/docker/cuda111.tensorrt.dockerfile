@@ -4,9 +4,7 @@ ARG baseimage=21.02-py3
 # yolov5 recommended for 21.08-py3, here we use py3.8 + cuda11.1.1 + pytorch1.8.0
 # view https://docs.nvidia.com/deeplearning/frameworks/pytorch-release-notes/rel_20-12.html#rel_20-12 for details
 FROM nvcr.io/nvidia/pytorch:${baseimage}
-ARG YMIR="1.1.0"
 ENV PYTHONPATH=.
-ENV YMIR_VERSION=$YMIR
 # fix font download directory
 ENV YOLOV5_CONFIG_DIR='/app/data'
 
