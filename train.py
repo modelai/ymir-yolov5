@@ -40,6 +40,8 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
+from ymir_exc.code import ExecutorReturnCode, ExecutorState
+from ymir_exc.monitor import write_monitor_logger
 from ymir_exc.util import YmirStage, get_merged_config, write_ymir_monitor_process, write_ymir_training_result
 
 import val as validate  # for end-of-epoch mAP
@@ -66,7 +68,7 @@ from utils.torch_utils import (EarlyStopping, ModelEMA, de_parallel, select_devi
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
 RANK = int(os.getenv('RANK', -1))
 WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
-GIT_INFO = check_git_info()
+# GIT_INFO = check_git_info()
 
 
 def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
@@ -683,5 +685,30 @@ def run(**kwargs):
 
 
 if __name__ == "__main__":
-    opt = parse_opt()
-    main(opt)
+    try:
+        opt = parse_opt()
+        main(opt)
+    except Exception as e:
+        LOGGER.info(f'found exception {e}')
+
+        error_info = str(e).lower()
+        if error_info.find('cuda out of memory') >= -1:
+            write_monitor_logger(percent=1.0, state=ExecutorState.ES_ERROR, return_code=ExecutorReturnCode.RC_EXEC_OOM)
+        elif error_info.find('download') >= -1 or error_info.find('network') >= -1:
+            write_monitor_logger(percent=1.0,
+                                 state=ExecutorState.ES_ERROR,
+                                 return_code=ExecutorReturnCode.RC_EXEC_NETWORK_ERROR)
+        elif error_info.find('Invalid CUDA'.lower()) >= -1:
+            write_monitor_logger(percent=1.0,
+                                 state=ExecutorState.ES_ERROR,
+                                 return_code=ExecutorReturnCode.RC_EXEC_NO_GPU)
+        elif error_info.find('FileNotFoundError'.lower()) >= -1:
+            write_monitor_logger(percent=1.0,
+                                 state=ExecutorState.ES_ERROR,
+                                 return_code=ExecutorReturnCode.RC_EXEC_DATASET_ERROR)
+        else:
+            write_monitor_logger(percent=1.0,
+                                 state=ExecutorState.ES_ERROR,
+                                 return_code=ExecutorReturnCode.RC_CMD_CONTAINER_ERROR)
+
+        raise e

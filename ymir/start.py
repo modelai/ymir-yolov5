@@ -5,7 +5,9 @@ import sys
 
 from easydict import EasyDict as edict
 from ymir_exc import monitor
+from ymir_exc.code import ExecutorReturnCode, ExecutorState
 from ymir_exc.dataset_convert.ymir2yolov5 import convert_ymir_to_yolov5
+from ymir_exc.monitor import write_monitor_logger
 from ymir_exc.util import YmirStage, find_free_port, get_bool, get_merged_config, write_ymir_monitor_process
 
 from models.experimental import attempt_download
@@ -23,6 +25,9 @@ def start(cfg: edict) -> int:
         if cfg.ymir.run_infer:
             _run_infer(cfg)
 
+    ymir_debug = get_bool(cfg, "ymir_debug", False)
+    if ymir_debug:
+        raise Exception("set ymir_debug to True, just for debug")
     return 0
 
 
@@ -34,7 +39,13 @@ def _run_training(cfg: edict) -> None:
     3. save model weight/hyperparameter/... to design directory
     """
     # 1. convert dataset
-    data_yaml = convert_ymir_to_yolov5(cfg)
+    try:
+        data_yaml = convert_ymir_to_yolov5(cfg)
+    except Exception:
+        write_monitor_logger(percent=1.0,
+                             state=ExecutorState.ES_ERROR,
+                             return_code=ExecutorReturnCode.RC_EXEC_DATASET_ERROR)
+        raise
     logging.info(f'convert dataset and generate {data_yaml}')
     write_ymir_monitor_process(cfg, task='training', naive_stage_percent=1.0, stage=YmirStage.PREPROCESS)
 
@@ -154,4 +165,5 @@ if __name__ == '__main__':
     activation: str = cfg.param.get('activation', '')
     if activation:
         os.environ.setdefault('ACTIVATION', activation)
+
     sys.exit(start(cfg))

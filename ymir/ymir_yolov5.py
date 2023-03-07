@@ -9,6 +9,8 @@ import torch
 from easydict import EasyDict as edict
 from nptyping import NDArray, Shape, UInt8
 from ymir_exc import result_writer as rw
+from ymir_exc.code import ExecutorReturnCode, ExecutorState
+from ymir_exc.monitor import write_monitor_logger
 from ymir_exc.util import get_bool, get_weight_files
 
 from models.common import DetectMultiBackend
@@ -92,6 +94,9 @@ class YmirYolov5(torch.nn.Module):
         weights = get_weight_file(self.cfg)
 
         if not weights:
+            write_monitor_logger(percent=1.0,
+                                 state=ExecutorState.ES_ERROR,
+                                 return_code=ExecutorReturnCode.RC_EXEC_MODEL_ERROR)
             raise Exception("no weights file specified!")
 
         data_yaml = osp.join(self.cfg.ymir.output.root_dir, 'data.yaml')
